@@ -75,7 +75,6 @@ void IRAM_ATTR isrBtnMode() {
     lastIsrTime = now;
   }
 }
-
 void IRAM_ATTR isrBtnUp() {
   unsigned long now = millis();
   if (now - lastIsrTime > debounceIsr) {
@@ -83,7 +82,6 @@ void IRAM_ATTR isrBtnUp() {
     lastIsrTime = now;
   }
 }
-
 void IRAM_ATTR isrBtnDown() {
   unsigned long now = millis();
   if (now - lastIsrTime > debounceIsr) {
@@ -100,7 +98,6 @@ void drawBatteryIcon(int x, int y, int percent) {
   u8g2.drawBox(x + 1, y + 1 + OFFSET_Y,
                map(percent, 0, 100, 0, 16), 6);
 }
-
 void drawSunIcon(int x, int y) {
   y += OFFSET_Y;
   u8g2.drawDisc(x, y, 3);
@@ -132,25 +129,20 @@ void TimeTask(void *pv) {
 void BatteryTask(void *pv) {
   ina219.begin();
   while (1) {
-    batteryVoltage = ina219.getBusVoltage_V();
+    
     batteryPercent = calcBatteryPercent(batteryVoltage);
     vTaskDelay(pdMS_TO_TICKS(2000));
   }
 }
 
-/* ================= TASK UV ================= */
-void UVTask(void *pv) {
+/* ================= TASK ENV (UV + DHT) ================= */
+void EnvTask(void *pv) {
   uv.begin(VEML6070_1_T);
+  dht.begin();
+
   while (1) {
     uvRaw = uv.readUV();
-    vTaskDelay(pdMS_TO_TICKS(1000));
-  }
-}
 
-/* ================= TASK DHT ================= */
-void DHTTask(void *pv) {
-  dht.begin();
-  while (1) {
     float h = dht.readHumidity();
     float t = dht.readTemperature();
     if (!isnan(h) && !isnan(t)) {
@@ -161,73 +153,66 @@ void DHTTask(void *pv) {
   }
 }
 
-/* ================= TASK BUTTON (EVENT-BASED) ================= */
-void ButtonTask(void *pv) {
+/* ================= TASK UI (BUTTON + DISPLAY) ================= */
+void UiTask(void *pv) {
   while (1) {
 
-    if (millis() - bootTime < 1500) {
-      vTaskDelay(pdMS_TO_TICKS(20));
-      continue;
+    /* ===== BUTTON ===== */
+    if (millis() - bootTime >= 1500) {
+
+      if (evtMode) {
+        evtMode = false;
+
+        if (modeState == MODE_NORMAL) {
+          DateTime now = rtc.now();
+          setHour  = now.hour();
+          setMin   = now.minute();
+          setSec   = now.second();
+          setDay   = now.day();
+          setMonth = now.month();
+          setYear  = now.year();
+          modeState = MODE_SET_HOUR;
+        }
+        else if (modeState == MODE_SET_YEAR) {
+          rtc.adjust(DateTime(
+            setYear, setMonth, setDay,
+            setHour, setMin, setSec
+          ));
+          modeState = MODE_NORMAL;
+        }
+        else {
+          modeState = (ModeState)(modeState + 1);
+        }
+      }
+
+      if (evtUp) {
+        evtUp = false;
+        switch (modeState) {
+          case MODE_SET_HOUR:  setHour = (setHour + 1) % 24; break;
+          case MODE_SET_MIN:   setMin  = (setMin + 1) % 60; break;
+          case MODE_SET_SEC:   setSec  = (setSec + 1) % 60; break;
+          case MODE_SET_DAY:   setDay   = constrain(setDay + 1, 1, 31); break;
+          case MODE_SET_MONTH: setMonth = constrain(setMonth + 1, 1, 12); break;
+          case MODE_SET_YEAR:  setYear++; break;
+          default: break;
+        }
+      }
+
+      if (evtDown) {
+        evtDown = false;
+        switch (modeState) {
+          case MODE_SET_HOUR:  setHour = (setHour + 23) % 24; break;
+          case MODE_SET_MIN:   setMin  = (setMin + 59) % 60; break;
+          case MODE_SET_SEC:   setSec  = (setSec + 59) % 60; break;
+          case MODE_SET_DAY:   setDay   = constrain(setDay - 1, 1, 31); break;
+          case MODE_SET_MONTH: setMonth = constrain(setMonth - 1, 1, 12); break;
+          case MODE_SET_YEAR:  setYear--; break;
+          default: break;
+        }
+      }
     }
 
-    if (evtMode) {
-      evtMode = false;
-
-      if (modeState == MODE_NORMAL) {
-        DateTime now = rtc.now();
-        setHour  = now.hour();
-        setMin   = now.minute();
-        setSec   = now.second();
-        setDay   = now.day();
-        setMonth = now.month();
-        setYear  = now.year();
-        modeState = MODE_SET_HOUR;
-      }
-      else if (modeState == MODE_SET_YEAR) {
-        rtc.adjust(DateTime(
-          setYear, setMonth, setDay,
-          setHour, setMin, setSec
-        ));
-        modeState = MODE_NORMAL;
-      }
-      else {
-        modeState = (ModeState)(modeState + 1);
-      }
-    }
-
-    if (evtUp) {
-      evtUp = false;
-      switch (modeState) {
-        case MODE_SET_HOUR:  setHour = (setHour + 1) % 24; break;
-        case MODE_SET_MIN:   setMin  = (setMin + 1) % 60; break;
-        case MODE_SET_SEC:   setSec  = (setSec + 1) % 60; break;
-        case MODE_SET_DAY:   setDay   = constrain(setDay + 1, 1, 31); break;
-        case MODE_SET_MONTH: setMonth = constrain(setMonth + 1, 1, 12); break;
-        case MODE_SET_YEAR:  setYear++; break;
-        default: break;
-      }
-    }
-
-    if (evtDown) {
-      evtDown = false;
-      switch (modeState) {
-        case MODE_SET_HOUR:  setHour = (setHour + 23) % 24; break;
-        case MODE_SET_MIN:   setMin  = (setMin + 59) % 60; break;
-        case MODE_SET_SEC:   setSec  = (setSec + 59) % 60; break;
-        case MODE_SET_DAY:   setDay   = constrain(setDay - 1, 1, 31); break;
-        case MODE_SET_MONTH: setMonth = constrain(setMonth - 1, 1, 12); break;
-        case MODE_SET_YEAR:  setYear--; break;
-        default: break;
-      }
-    }
-
-    vTaskDelay(pdMS_TO_TICKS(10));
-  }
-}
-
-/* ================= TASK DISPLAY ================= */
-void DisplayTask(void *pv) {
-  while (1) {
+    /* ===== DISPLAY ===== */
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_6x12_tf);
 
@@ -303,10 +288,8 @@ void setup() {
 
   xTaskCreate(TimeTask,    "Time",    4096, NULL, 1, NULL);
   xTaskCreate(BatteryTask,"Battery", 4096, NULL, 1, NULL);
-  xTaskCreate(UVTask,     "UV",      4096, NULL, 1, NULL);
-  xTaskCreate(DHTTask,    "DHT",     4096, NULL, 1, NULL);
-  xTaskCreate(ButtonTask, "Button",  4096, NULL, 2, NULL);
-  xTaskCreate(DisplayTask,"Display", 4096, NULL, 1, NULL);
+  xTaskCreate(EnvTask,    "ENV",     4096, NULL, 1, NULL);
+  xTaskCreate(UiTask,     "UI",      4096, NULL, 2, NULL);
 }
 
 void loop() {}
